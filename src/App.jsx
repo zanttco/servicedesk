@@ -1582,7 +1582,6 @@ function SettingsPage({ sectors, stores, users, companyId, onRefresh }) {
 // BoardPage.jsx — Kanban + Agenda Semanal
 // ============================================================
 
-import { useState, useEffect } from "react";
 
 const COLUMNS = [
   { id:"backlog",     label:"Backlog",      dot:"#a1a1aa" },
