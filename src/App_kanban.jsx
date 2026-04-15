@@ -7,6 +7,7 @@ import { useState, useEffect, useCallback, useRef } from "react";
 import { createClient } from "@supabase/supabase-js";
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, PieChart, Pie, Cell } from "recharts";
 
+
 const SUPABASE_URL     = "https://wsbmstvklcplkgayyoed.supabase.co";
 const SUPABASE_ANON_KEY= "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6IndzYm1zdHZrbGNwbGtnYXl5b2VkIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzYxMjIxMDIsImV4cCI6MjA5MTY5ODEwMn0.HWo-xWxTjdQZ-W1Bzz5r_ta-QwVuDf7BwcJZbLzcPsA";
 const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
@@ -388,6 +389,7 @@ function MainApp({ profile, onLogout }) {
     { id:"tickets",   label:"Chamados", badge: openCount+inACount||null },
     { id:"new",       label:"Novo chamado" },
     ...(profile?.role !== "store" ? [{ id:"self", label:"Registro de serviço" }] : []),
+    ...(["admin","superadmin","leader"].includes(profile?.role) ? [{ id:"board", label:"Quadro" }] : []),
     ...(isAdmin ? [{ id:"settings", label:"Configurações" }] : []),
   ];
 
@@ -439,6 +441,7 @@ function MainApp({ profile, onLogout }) {
             {page==="new"       && <NewTicketPage sectors={sectors} stores={stores} profile={profile} onDone={() => { fetchAll(); setPage("tickets"); }} />}
             {page==="self"      && <SelfTicketPage sectors={sectors} stores={stores} profile={profile} onDone={() => { fetchAll(); setPage("tickets"); }} />}
             {page==="settings"  && <SettingsPage sectors={sectors} stores={stores} users={users} companyId={companyId} onRefresh={fetchAll} />}
+            {page==="board"     && <BoardPage profile={profile} supabase={supabase} sectors={sectors} stores={stores} users={users} />}
           </>
         }
       </main>
@@ -1574,5 +1577,473 @@ function SettingsPage({ sectors, stores, users, companyId, onRefresh }) {
       </div>
     )}
     </div>
+  );
+}
+
+// ── BOARD PAGE ────────────────────────────────────────────────
+
+function BoardPage({ profile, supabase, sectors, stores, users }) {
+  const [view,         setView]         = useState("kanban");
+  const [taskList,     setTaskList]     = useState([]);
+  const [loadingBoard, setLoadingBoard] = useState(true);
+  const [modal,        setModal]        = useState(null);
+  const [detailTask,   setDetailTask]   = useState(null);
+  const [weekOffset,   setWeekOffset]   = useState(0);
+  const [filterSector, setFilterSector] = useState("");
+  const [filterStore,  setFilterStore]  = useState("");
+  const [formTask,     setFormTask]     = useState({});
+  const [savingTask,   setSavingTask]   = useState(false);
+  const dragRef = useRef(null);
+  const [dragOver, setDragOver] = useState(null);
+
+  const companyId = profile?.company_id;
+  const isAdmin   = ["admin","superadmin","leader"].includes(profile?.role);
+
+  const COLS = [
+    { id:"backlog",     label:"Backlog",       dot:"#71717a" },
+    { id:"planned",     label:"Planejado",     dot:"#2563eb" },
+    { id:"in_progress", label:"Em andamento",  dot:"#d97706" },
+    { id:"done",        label:"Concluído",      dot:"#16a34a" },
+  ];
+
+  const fetchBoard = async () => {
+    setLoadingBoard(true);
+    const { data } = await supabase
+      .from("board_tasks")
+      .select("*, sector:sectors(id,name), store:stores(id,name,city), assignee:profiles!board_tasks_assigned_to_fkey(id,name,avatar)")
+      .eq("company_id", companyId)
+      .order("created_at", { ascending: false });
+    setTaskList(data || []);
+    setLoadingBoard(false);
+  };
+
+  useEffect(() => { if (companyId) fetchBoard(); }, [companyId]);
+
+  const filtered = taskList.filter(t => {
+    if (filterSector && t.sector_id !== filterSector) return false;
+    if (filterStore  && t.store_id  !== filterStore)  return false;
+    return true;
+  });
+
+  // Week days
+  const today   = new Date();
+  const weekStart = new Date(today);
+  weekStart.setDate(today.getDate() - today.getDay() + 1 + weekOffset * 7);
+  const weekDays = Array.from({length:7}, (_, i) => {
+    const d = new Date(weekStart);
+    d.setDate(weekStart.getDate() + i);
+    return d;
+  });
+  const todayISO = today.toISOString().split("T")[0];
+  const toISO = (d) => d.toISOString().split("T")[0];
+  const WDAYS = ["Seg","Ter","Qua","Qui","Sex","Sáb","Dom"];
+
+  // Drag & drop
+  const onDragStart = (task) => { dragRef.current = task; };
+  const onDrop = async (colId) => {
+    if (!dragRef.current || dragRef.current.status === colId) { setDragOver(null); return; }
+    const id = dragRef.current.id;
+    setTaskList(prev => prev.map(t => t.id===id ? {...t, status:colId} : t));
+    await supabase.from("board_tasks").update({status:colId}).eq("id",id);
+    dragRef.current = null;
+    setDragOver(null);
+  };
+
+  // Save task
+  const setF = (k,v) => setFormTask(f => ({...f,[k]:v}));
+
+  const openNew = (status="backlog", date=null) => {
+    setFormTask({ title:"", description:"", status, priority:"medium",
+      sector_id:"", store_id:"", assigned_to:"",
+      due_date: date||"", planned_date: date||"" });
+    setModal("new");
+  };
+
+  const openEdit = (task) => {
+    setFormTask({ title:task.title, description:task.description||"",
+      status:task.status, priority:task.priority,
+      sector_id:task.sector_id||"", store_id:task.store_id||"",
+      assigned_to:task.assigned_to||"",
+      due_date:task.due_date||"", planned_date:task.planned_date||"" });
+    setDetailTask(null);
+    setModal(task.id);
+  };
+
+  const saveTask = async () => {
+    if (!formTask.title) return;
+    setSavingTask(true);
+    const payload = {
+      company_id: companyId, title: formTask.title,
+      description: formTask.description||null, status: formTask.status,
+      priority: formTask.priority, sector_id: formTask.sector_id||null,
+      store_id: formTask.store_id||null, assigned_to: formTask.assigned_to||null,
+      due_date: formTask.due_date||null, planned_date: formTask.planned_date||null,
+      created_by: profile.id,
+    };
+    if (modal === "new") {
+      await supabase.from("board_tasks").insert(payload);
+    } else {
+      await supabase.from("board_tasks").update(payload).eq("id", modal);
+    }
+    setSavingTask(false);
+    setModal(null);
+    fetchBoard();
+  };
+
+  const delTask = async (id) => {
+    if (!window.confirm("Excluir tarefa?")) return;
+    await supabase.from("board_tasks").delete().eq("id", id);
+    setDetailTask(null);
+    fetchBoard();
+  };
+
+  const isOverdue = (d) => d && new Date(d) < new Date(today.toDateString());
+  const fmtD = (d) => d ? new Date(d+"T12:00:00").toLocaleDateString("pt-BR",{day:"2-digit",month:"2-digit"}) : null;
+
+  const BCSS = `
+    .board-page{display:flex;flex-direction:column;height:100%;font-family:'IBM Plex Sans',sans-serif}
+    .b-topbar{background:#fff;border-bottom:1px solid #e4e4e7;padding:0 24px;height:52px;display:flex;align-items:center;justify-content:space-between;flex-shrink:0;position:sticky;top:0;z-index:50}
+    .b-title{font-size:14px;font-weight:500;color:#18181b}
+    .b-tabs{display:flex;gap:2px;background:#f4f4f5;padding:3px;border-radius:8px;border:1px solid #e4e4e7}
+    .b-tab{padding:5px 14px;border-radius:5px;font-size:12px;font-weight:500;cursor:pointer;color:#71717a;transition:.12s;font-family:inherit}
+    .b-tab.active{background:#fff;color:#18181b;box-shadow:0 1px 3px rgba(0,0,0,.08)}
+    .b-filters{padding:8px 24px;background:#fafafa;border-bottom:1px solid #f4f4f5;display:flex;gap:6px;flex-wrap:wrap;align-items:center;flex-shrink:0}
+    .b-chip{padding:4px 11px;border-radius:99px;font-size:11px;font-weight:500;cursor:pointer;border:1px solid #e4e4e7;color:#71717a;background:#fff;transition:.12s;font-family:inherit}
+    .b-chip:hover{border-color:#a1a1aa;color:#18181b}
+    .b-chip.active{background:#18181b;border-color:#18181b;color:#fff}
+    .b-lbl{font-size:10.5px;color:#a1a1aa}
+    /* KANBAN */
+    .kanban{flex:1;display:grid;grid-template-columns:repeat(4,1fr);gap:12px;padding:16px 24px;overflow-x:auto;align-items:start}
+    .k-col{background:#fafafa;border:1px solid #f4f4f5;border-radius:10px;min-height:300px;display:flex;flex-direction:column}
+    .k-col.dov{outline:2px dashed #a1a1aa;outline-offset:-4px}
+    .k-head{padding:11px 13px;border-bottom:1px solid #f4f4f5;display:flex;align-items:center;justify-content:space-between;flex-shrink:0}
+    .k-label{font-size:11.5px;font-weight:600;color:#52525b;text-transform:uppercase;letter-spacing:.5px;display:flex;align-items:center;gap:5px}
+    .k-dot{width:7px;height:7px;border-radius:50%}
+    .k-count{background:#e4e4e7;color:#71717a;font-size:10px;font-weight:600;padding:1px 6px;border-radius:99px;font-family:'IBM Plex Mono',monospace}
+    .k-cards{padding:8px;flex:1;display:flex;flex-direction:column;gap:7px;min-height:80px}
+    .k-add{margin:0 8px 8px;padding:7px;border:1px dashed #e4e4e7;border-radius:6px;text-align:center;font-size:11.5px;color:#a1a1aa;cursor:pointer;background:transparent;font-family:inherit;transition:.12s}
+    .k-add:hover{border-color:#a1a1aa;color:#52525b}
+    /* TASK CARD */
+    .tcard{background:#fff;border:1px solid #e4e4e7;border-radius:7px;padding:11px;cursor:pointer;transition:.12s;position:relative;overflow:hidden}
+    .tcard:hover{box-shadow:0 3px 10px rgba(0,0,0,.08);transform:translateY(-1px)}
+    .tcard::before{content:'';position:absolute;left:0;top:0;bottom:0;width:3px;border-radius:3px 0 0 3px}
+    .tcard.ph::before{background:#dc2626}.tcard.pm::before{background:#d97706}.tcard.pl::before{background:#16a34a}
+    .tcard-title{font-size:12.5px;font-weight:500;color:#18181b;line-height:1.4;margin-bottom:7px}
+    .tcard-tags{display:flex;flex-wrap:wrap;gap:3px;margin-bottom:6px}
+    .ttag{display:inline-flex;align-items:center;padding:2px 7px;border-radius:99px;font-size:10px;font-weight:500;background:#f4f4f5;color:#52525b;border:1px solid #e4e4e7}
+    .ttag.city{background:#eff6ff;color:#1d4ed8;border-color:#bfdbfe}
+    .ttag.date{background:#fefce8;color:#854d0e;border-color:#fde68a}
+    .ttag.late{background:#fef2f2;color:#dc2626;border-color:#fecaca}
+    .tcard-foot{display:flex;align-items:center;justify-content:space-between;margin-top:5px}
+    .tcard-sec{font-size:10px;color:#a1a1aa;font-family:'IBM Plex Mono',monospace}
+    .tcard-av{width:21px;height:21px;border-radius:4px;background:#18181b;color:#fff;font-size:9px;font-weight:700;display:flex;align-items:center;justify-content:center}
+    /* AGENDA */
+    .agenda{flex:1;padding:16px 24px;overflow-y:auto}
+    .ag-nav{display:flex;align-items:center;gap:10px;margin-bottom:14px}
+    .ag-week{font-size:13px;font-weight:500;color:#18181b;min-width:190px;text-align:center}
+    .ag-btn{width:28px;height:28px;border-radius:5px;border:1px solid #e4e4e7;background:#fff;cursor:pointer;display:flex;align-items:center;justify-content:center;font-size:13px;color:#52525b;transition:.12s;font-family:inherit}
+    .ag-btn:hover{background:#f4f4f5}
+    .ag-today-btn{padding:4px 11px;border-radius:5px;border:1px solid #e4e4e7;background:#fff;cursor:pointer;font-size:11.5px;font-weight:500;color:#52525b;font-family:inherit;transition:.12s}
+    .ag-today-btn:hover{background:#f4f4f5}
+    .ag-grid{display:grid;grid-template-columns:repeat(7,1fr);gap:7px}
+    .ag-day{background:#fff;border:1px solid #e4e4e7;border-radius:8px;min-height:180px;display:flex;flex-direction:column}
+    .ag-day.today{border-color:#18181b;border-width:2px}
+    .ag-day.wend{background:#fafafa}
+    .ag-dhead{padding:9px 11px 7px;border-bottom:1px solid #f4f4f5;flex-shrink:0}
+    .ag-dname{font-size:9.5px;font-weight:600;color:#a1a1aa;text-transform:uppercase;letter-spacing:.5px}
+    .ag-dnum{font-size:19px;font-weight:300;color:#18181b;line-height:1.2;font-family:'IBM Plex Mono',monospace}
+    .ag-day.today .ag-dnum{color:#2563eb;font-weight:500}
+    .ag-dcards{padding:5px;flex:1;display:flex;flex-direction:column;gap:3px}
+    .ag-card{padding:5px 7px;border-radius:4px;font-size:11px;font-weight:500;cursor:pointer;transition:.12s;border-left:3px solid}
+    .ag-card:hover{opacity:.8}
+    .ag-card.ph{background:#fef2f2;border-color:#dc2626;color:#7f1d1d}
+    .ag-card.pm{background:#fffbeb;border-color:#d97706;color:#78350f}
+    .ag-card.pl{background:#f0fdf4;border-color:#16a34a;color:#14532d}
+    .ag-city{font-size:9.5px;opacity:.65;margin-top:1px}
+    .ag-add{margin:0 5px 5px;padding:4px;border:1px dashed #e4e4e7;border-radius:4px;text-align:center;font-size:10.5px;color:#d4d4d8;cursor:pointer;background:transparent;font-family:inherit;transition:.12s}
+    .ag-add:hover{border-color:#a1a1aa;color:#71717a}
+    /* MODAL */
+    .b-overlay{position:fixed;inset:0;background:rgba(0,0,0,.25);z-index:200;display:flex;align-items:flex-start;justify-content:center;padding:60px 20px;overflow-y:auto;animation:bfade .1s ease}
+    .b-modal{background:#fff;border:1px solid #e4e4e7;border-radius:10px;width:100%;max-width:500px;box-shadow:0 20px 60px rgba(0,0,0,.12);animation:bup .15s ease}
+    .bm-head{padding:15px 18px;border-bottom:1px solid #f4f4f5;display:flex;align-items:center;justify-content:space-between}
+    .bm-t{font-size:13.5px;font-weight:500;color:#18181b}
+    .bm-body{padding:16px 18px;max-height:60vh;overflow-y:auto}
+    .bm-foot{padding:12px 18px;border-top:1px solid #f4f4f5;display:flex;gap:7px;justify-content:flex-end}
+    .bm-x{width:26px;height:26px;border-radius:4px;border:1px solid #e4e4e7;background:transparent;color:#a1a1aa;cursor:pointer;display:flex;align-items:center;justify-content:center;font-size:14px;font-family:inherit}
+    .bf-row{margin-bottom:11px}
+    .bf-lbl{display:block;font-size:10px;font-weight:600;color:#71717a;text-transform:uppercase;letter-spacing:.5px;margin-bottom:4px}
+    .bf-inp,.bf-sel,.bf-ta{width:100%;padding:7px 10px;border-radius:6px;background:#fff;border:1px solid #e4e4e7;color:#18181b;font-family:inherit;font-size:12.5px;outline:none;transition:.12s}
+    .bf-inp:focus,.bf-sel:focus,.bf-ta:focus{border-color:#a1a1aa}
+    .bf-ta{resize:vertical;min-height:70px}
+    .bf-2col{display:grid;grid-template-columns:1fr 1fr;gap:9px}
+    .bb-primary{display:inline-flex;align-items:center;gap:4px;padding:7px 14px;border-radius:6px;background:#18181b;color:#fff;border:none;font-family:inherit;font-size:12px;font-weight:500;cursor:pointer;transition:.12s}
+    .bb-primary:hover{background:#3f3f46}
+    .bb-primary:disabled{opacity:.4;cursor:not-allowed}
+    .bb-ghost{display:inline-flex;align-items:center;gap:4px;padding:7px 14px;border-radius:6px;background:transparent;color:#71717a;border:1px solid #e4e4e7;font-family:inherit;font-size:12px;font-weight:500;cursor:pointer;transition:.12s}
+    .bb-ghost:hover{border-color:#a1a1aa;color:#18181b}
+    .bb-danger{display:inline-flex;align-items:center;gap:4px;padding:7px 14px;border-radius:6px;background:#fef2f2;color:#dc2626;border:1px solid #fecaca;font-family:inherit;font-size:12px;font-weight:500;cursor:pointer;transition:.12s}
+    .b-empty{text-align:center;padding:32px 16px;color:#a1a1aa;font-size:12px}
+    .b-info-grid{display:grid;grid-template-columns:1fr 1fr;gap:7px;margin-bottom:12px}
+    .b-info-box{padding:8px 10px;background:#fafafa;border:1px solid #f4f4f5;border-radius:6px}
+    .b-info-k{font-size:9.5px;font-weight:600;color:#a1a1aa;text-transform:uppercase;letter-spacing:.5px;margin-bottom:2px}
+    .b-info-v{font-size:12.5px;color:#18181b}
+    @keyframes bfade{from{opacity:0}to{opacity:1}}
+    @keyframes bup{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:translateY(0)}}
+  `;
+
+  const PL = {high:"Alta",medium:"Média",low:"Baixa"};
+
+  const TaskCard = ({task}) => {
+    const ov = isOverdue(task.due_date);
+    return (
+      <div className={`tcard p${task.priority[0]}`}
+        draggable={isAdmin}
+        onDragStart={()=>onDragStart(task)}
+        onClick={()=>setDetailTask(task)}>
+        <div className="tcard-title">{task.title}</div>
+        <div className="tcard-tags">
+          {task.store?.city && <span className="ttag city">{task.store.city}</span>}
+          {task.store && !task.store?.city && <span className="ttag">{task.store.name}</span>}
+          {task.due_date && <span className={`ttag ${ov?"late":"date"}`}>{ov?"Atrasado ":""}{fmtD(task.due_date)}</span>}
+        </div>
+        <div className="tcard-foot">
+          <span className="tcard-sec">{task.sector?.name||""}</span>
+          {task.assignee && <div className="tcard-av" title={task.assignee.name}>{task.assignee.avatar||task.assignee.name?.[0]}</div>}
+        </div>
+      </div>
+    );
+  };
+
+  const AgendaCard = ({task}) => (
+    <div className={`ag-card p${task.priority[0]}`} onClick={()=>setDetailTask(task)}>
+      {task.title}
+      {task.store?.city && <div className="ag-city">{task.store.city}</div>}
+    </div>
+  );
+
+  return (
+    <>
+      <style>{BCSS}</style>
+      <div className="board-page">
+
+        <div className="b-topbar">
+          <span className="b-title">Quadro de Planejamento</span>
+          <div style={{display:"flex",alignItems:"center",gap:10}}>
+            <div className="b-tabs">
+              <div className={`b-tab ${view==="kanban"?"active":""}`} onClick={()=>setView("kanban")}>Kanban</div>
+              <div className={`b-tab ${view==="agenda"?"active":""}`} onClick={()=>setView("agenda")}>Agenda</div>
+            </div>
+            {isAdmin && <button className="bb-primary" onClick={()=>openNew()}>+ Nova tarefa</button>}
+          </div>
+        </div>
+
+        <div className="b-filters">
+          <span className="b-lbl">Filtrar:</span>
+          <button className={`b-chip ${!filterStore&&!filterSector?"active":""}`}
+            onClick={()=>{setFilterStore("");setFilterSector("");}}>Todos</button>
+          {stores.map(s=>(
+            <button key={s.id} className={`b-chip ${filterStore===s.id?"active":""}`}
+              onClick={()=>setFilterStore(filterStore===s.id?"":s.id)}>
+              {s.city||s.name}
+            </button>
+          ))}
+          {sectors.map(s=>(
+            <button key={s.id} className={`b-chip ${filterSector===s.id?"active":""}`}
+              onClick={()=>setFilterSector(filterSector===s.id?"":s.id)}>
+              {s.name}
+            </button>
+          ))}
+        </div>
+
+        {view==="kanban" && (
+          <div className="kanban">
+            {COLS.map(col => {
+              const cards = filtered.filter(t=>t.status===col.id);
+              return (
+                <div key={col.id} className={`k-col ${dragOver===col.id?"dov":""}`}
+                  onDragOver={e=>{e.preventDefault();setDragOver(col.id);}}
+                  onDrop={()=>onDrop(col.id)}
+                  onDragLeave={()=>setDragOver(null)}>
+                  <div className="k-head">
+                    <div className="k-label">
+                      <div className="k-dot" style={{background:col.dot}}/>
+                      {col.label}
+                    </div>
+                    <span className="k-count">{cards.length}</span>
+                  </div>
+                  <div className="k-cards">
+                    {cards.length===0 && <div className="b-empty">Vazio</div>}
+                    {cards.map(t=><TaskCard key={t.id} task={t}/>)}
+                  </div>
+                  {isAdmin && <button className="k-add" onClick={()=>openNew(col.id)}>+ Adicionar</button>}
+                </div>
+              );
+            })}
+          </div>
+        )}
+
+        {view==="agenda" && (
+          <div className="agenda">
+            <div className="ag-nav">
+              <button className="ag-btn" onClick={()=>setWeekOffset(w=>w-1)}>‹</button>
+              <span className="ag-week">
+                {weekDays[0].toLocaleDateString("pt-BR",{day:"2-digit",month:"short"})} —{" "}
+                {weekDays[6].toLocaleDateString("pt-BR",{day:"2-digit",month:"short",year:"numeric"})}
+              </span>
+              <button className="ag-btn" onClick={()=>setWeekOffset(w=>w+1)}>›</button>
+              <button className="ag-today-btn" onClick={()=>setWeekOffset(0)}>Hoje</button>
+            </div>
+            <div className="ag-grid">
+              {weekDays.map((day,i) => {
+                const iso     = toISO(day);
+                const isToday = iso===todayISO;
+                const isWend  = i>=5;
+                const cards   = filtered.filter(t=>t.planned_date===iso||t.due_date===iso);
+                return (
+                  <div key={iso} className={`ag-day ${isToday?"today":""} ${isWend?"wend":""}`}>
+                    <div className="ag-dhead">
+                      <div className="ag-dname">{WDAYS[i]}</div>
+                      <div className="ag-dnum">{day.getDate().toString().padStart(2,"0")}</div>
+                    </div>
+                    <div className="ag-dcards">
+                      {cards.map(t=><AgendaCard key={t.id} task={t}/>)}
+                    </div>
+                    {isAdmin && <button className="ag-add" onClick={()=>openNew("planned",iso)}>+</button>}
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        )}
+      </div>
+
+      {detailTask && (
+        <div className="b-overlay" onClick={e=>e.target===e.currentTarget&&setDetailTask(null)}>
+          <div className="b-modal">
+            <div className="bm-head">
+              <div>
+                <div className="bm-t">{detailTask.title}</div>
+                <div style={{fontSize:11,color:"#a1a1aa",marginTop:2,display:"flex",gap:8}}>
+                  <span style={{color:{high:"#dc2626",medium:"#d97706",low:"#16a34a"}[detailTask.priority],fontWeight:600}}>{PL[detailTask.priority]}</span>
+                  {detailTask.sector?.name && <span>{detailTask.sector.name}</span>}
+                  {detailTask.store && <span>{detailTask.store.name}{detailTask.store.city?` — ${detailTask.store.city}`:""}</span>}
+                </div>
+              </div>
+              <button className="bm-x" onClick={()=>setDetailTask(null)}>×</button>
+            </div>
+            <div className="bm-body">
+              {detailTask.description && (
+                <div style={{fontSize:12.5,color:"#52525b",lineHeight:1.6,marginBottom:12,
+                  padding:"9px 11px",background:"#fafafa",borderRadius:6,border:"1px solid #f4f4f5"}}>
+                  {detailTask.description}
+                </div>
+              )}
+              <div className="b-info-grid">
+                {[
+                  ["Status",    ["Backlog","Planejado","Em andamento","Concluído"][["backlog","planned","in_progress","done"].indexOf(detailTask.status)]||detailTask.status],
+                  ["Prioridade",PL[detailTask.priority]],
+                  ["Planejado", detailTask.planned_date ? new Date(detailTask.planned_date+"T12:00:00").toLocaleDateString("pt-BR") : "—"],
+                  ["Prazo",     detailTask.due_date     ? new Date(detailTask.due_date+"T12:00:00").toLocaleDateString("pt-BR")     : "—"],
+                  ["Responsável",detailTask.assignee?.name||"—"],
+                  ["Filial",    detailTask.store ? `${detailTask.store.name}${detailTask.store.city?` — ${detailTask.store.city}`:""}` : "—"],
+                ].map(([k,v])=>(
+                  <div key={k} className="b-info-box">
+                    <div className="b-info-k">{k}</div>
+                    <div className="b-info-v">{v}</div>
+                  </div>
+                ))}
+              </div>
+            </div>
+            {isAdmin && (
+              <div className="bm-foot">
+                <button className="bb-danger" onClick={()=>delTask(detailTask.id)}>Excluir</button>
+                <button className="bb-ghost"  onClick={()=>setDetailTask(null)}>Fechar</button>
+                <button className="bb-primary" onClick={()=>openEdit(detailTask)}>Editar</button>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
+      {modal && (
+        <div className="b-overlay" onClick={e=>e.target===e.currentTarget&&setModal(null)}>
+          <div className="b-modal">
+            <div className="bm-head">
+              <span className="bm-t">{modal==="new"?"Nova tarefa":"Editar tarefa"}</span>
+              <button className="bm-x" onClick={()=>setModal(null)}>×</button>
+            </div>
+            <div className="bm-body">
+              <div className="bf-row">
+                <label className="bf-lbl">Título *</label>
+                <input className="bf-inp" placeholder="Ex: Manutenção preventiva Filial 30"
+                  value={formTask.title||""} onChange={e=>setF("title",e.target.value)} autoFocus/>
+              </div>
+              <div className="bf-row">
+                <label className="bf-lbl">Descrição</label>
+                <textarea className="bf-ta" placeholder="Detalhes..."
+                  value={formTask.description||""} onChange={e=>setF("description",e.target.value)}/>
+              </div>
+              <div className="bf-2col">
+                <div className="bf-row">
+                  <label className="bf-lbl">Status</label>
+                  <select className="bf-sel" value={formTask.status||"backlog"} onChange={e=>setF("status",e.target.value)}>
+                    {COLS.map(c=><option key={c.id} value={c.id}>{c.label}</option>)}
+                  </select>
+                </div>
+                <div className="bf-row">
+                  <label className="bf-lbl">Prioridade</label>
+                  <select className="bf-sel" value={formTask.priority||"medium"} onChange={e=>setF("priority",e.target.value)}>
+                    <option value="low">Baixa</option>
+                    <option value="medium">Média</option>
+                    <option value="high">Alta</option>
+                  </select>
+                </div>
+              </div>
+              <div className="bf-2col">
+                <div className="bf-row">
+                  <label className="bf-lbl">Data planejada</label>
+                  <input className="bf-inp" type="date"
+                    value={formTask.planned_date||""} onChange={e=>setF("planned_date",e.target.value)}/>
+                </div>
+                <div className="bf-row">
+                  <label className="bf-lbl">Prazo final</label>
+                  <input className="bf-inp" type="date"
+                    value={formTask.due_date||""} onChange={e=>setF("due_date",e.target.value)}/>
+                </div>
+              </div>
+              <div className="bf-2col">
+                <div className="bf-row">
+                  <label className="bf-lbl">Setor</label>
+                  <select className="bf-sel" value={formTask.sector_id||""} onChange={e=>setF("sector_id",e.target.value)}>
+                    <option value="">Nenhum</option>
+                    {sectors.map(s=><option key={s.id} value={s.id}>{s.name}</option>)}
+                  </select>
+                </div>
+                <div className="bf-row">
+                  <label className="bf-lbl">Filial / Cidade</label>
+                  <select className="bf-sel" value={formTask.store_id||""} onChange={e=>setF("store_id",e.target.value)}>
+                    <option value="">Nenhuma</option>
+                    {stores.map(s=><option key={s.id} value={s.id}>{s.city||s.name}</option>)}
+                  </select>
+                </div>
+              </div>
+              <div className="bf-row">
+                <label className="bf-lbl">Responsável</label>
+                <select className="bf-sel" value={formTask.assigned_to||""} onChange={e=>setF("assigned_to",e.target.value)}>
+                  <option value="">Nenhum</option>
+                  {(users||[]).map(u=><option key={u.id} value={u.id}>{u.name}</option>)}
+                </select>
+              </div>
+            </div>
+            <div className="bm-foot">
+              <button className="bb-ghost"   onClick={()=>setModal(null)}>Cancelar</button>
+              <button className="bb-primary" onClick={saveTask} disabled={savingTask||!formTask.title}>
+                {savingTask?"Salvando...":modal==="new"?"Criar":"Salvar"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+    </>
   );
 }

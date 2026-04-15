@@ -76,6 +76,14 @@ html,body{height:100%;background:var(--gray-50);color:var(--gray-900);font-famil
   font-size:10px;font-weight:600;display:flex;align-items:center;justify-content:center;flex-shrink:0;letter-spacing:0.3px}
 .sb-user-name{font-size:12px;font-weight:500;color:var(--gray-800)}
 .sb-user-role{font-size:10px;color:var(--gray-400)}
+.sb-label{font-size:13px}
+@media(max-width:768px){
+  .sb-hide-mobile{display:none}
+  .sb-label{font-size:10px;font-weight:500;text-align:center;line-height:1.2;
+    overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:56px}
+  .sb-item.active{background:transparent;color:var(--gray-900)}
+  .sb-item:hover{background:transparent}
+}
 .sb-logout{width:100%;margin-top:4px;padding:6px 10px;background:transparent;border:1px solid var(--gray-200);
   border-radius:var(--radius);color:var(--gray-500);font-family:var(--font);font-size:12px;cursor:pointer;transition:var(--ease);text-align:left}
 .sb-logout:hover{border-color:var(--gray-300);color:var(--gray-700);background:var(--gray-50)}
@@ -230,6 +238,164 @@ tbody tr:hover{background:var(--gray-50)}
 @keyframes fadeIn{from{opacity:0}to{opacity:1}}
 @keyframes fadeUp{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:translateY(0)}}
 @keyframes spin{to{transform:rotate(360deg)}}
+
+/* ── RESPONSIVE MOBILE ─────────────────────────────────── */
+@media (max-width: 768px) {
+  /* Sidebar vira bottom nav no mobile */
+  .sidebar {
+    width: 100%;
+    height: 56px;
+    top: auto;
+    bottom: 0;
+    left: 0;
+    right: 0;
+    flex-direction: row;
+    border-right: none;
+    border-top: 1px solid var(--gray-200);
+    z-index: 200;
+  }
+  .sb-logo { display: none; }
+  .sb-nav {
+    flex: 1;
+    display: flex;
+    flex-direction: row;
+    align-items: center;
+    justify-content: space-around;
+    padding: 0;
+    overflow: visible;
+  }
+  .sb-section { display: none; }
+  .sb-item {
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 2px;
+    padding: 6px 4px;
+    border-radius: 6px;
+    font-size: 10px;
+    flex: 1;
+    min-width: 0;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .sb-item .sb-dot { display: none; }
+  .sb-badge { font-size: 9px; padding: 1px 4px; }
+  .sb-user { display: none; }
+
+  /* Main content acima da bottom nav */
+  .main {
+    margin-left: 0;
+    padding-bottom: 56px;
+  }
+
+  /* Topbar menor */
+  .topbar {
+    padding: 0 14px;
+    height: 48px;
+  }
+  .topbar-title { font-size: 13px; }
+
+  /* Page padding menor */
+  .page { padding: 14px; }
+
+  /* Stats em 2 colunas */
+  .stats-row {
+    grid-template-columns: 1fr 1fr;
+    gap: 8px;
+  }
+  .stat { padding: 12px 14px; }
+  .stat-val { font-size: 22px; }
+
+  /* Charts em coluna */
+  .charts-row,
+  div[style*="grid-template-columns: 1fr 1fr"] {
+    grid-template-columns: 1fr !important;
+  }
+
+  /* Tabela de chamados — scrollable horizontal */
+  .table-wrap { overflow-x: auto; -webkit-overflow-scrolling: touch; }
+  table { min-width: 480px; }
+  th, td { padding: 8px 10px; font-size: 12px; }
+
+  /* Filtros scroll horizontal */
+  .filter-bar { flex-wrap: nowrap; overflow-x: auto; padding-bottom: 4px; }
+  .filter-bar::-webkit-scrollbar { display: none; }
+  .filter-btn { white-space: nowrap; flex-shrink: 0; }
+
+  /* Search full width */
+  .search-wrap { width: 100%; }
+  .search-input { width: 100%; }
+  .topbar-right { gap: 6px; }
+
+  /* Modal full screen */
+  .overlay { padding: 0; align-items: flex-end; }
+  .modal {
+    max-width: 100%;
+    border-radius: 16px 16px 0 0;
+    max-height: 90vh;
+  }
+  .modal-body { max-height: 60vh; }
+
+  /* Forms */
+  .form-2col { grid-template-columns: 1fr; }
+
+  /* Info grid */
+  .info-grid { grid-template-columns: 1fr; }
+
+  /* Upload zone menor */
+  .upload-zone { padding: 14px; }
+
+  /* Card head wrap */
+  .card-head { flex-wrap: wrap; gap: 8px; padding: 12px 14px; }
+  .card-body { padding: 14px; }
+
+  /* Tabs scroll */
+  .tabs { overflow-x: auto; -webkit-overflow-scrolling: touch; }
+  .tabs::-webkit-scrollbar { display: none; }
+
+  /* Buttons menores */
+  .btn { padding: 6px 12px; font-size: 11.5px; }
+}
+
+@media (max-width: 480px) {
+  /* Stats em coluna no celular pequeno */
+  .stats-row { grid-template-columns: 1fr 1fr; }
+
+  /* Sidebar items menores */
+  .sb-item { font-size: 9px; padding: 4px 2px; }
+
+  /* Page menor */
+  .page { padding: 10px; }
+}
+
+/* ── KANBAN MOBILE ── */
+@media (max-width: 768px) {
+  .kanban {
+    grid-template-columns: repeat(4, 260px);
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+    padding-bottom: 16px;
+  }
+  .k-col { min-width: 260px; }
+
+  /* Agenda semanal — scroll horizontal */
+  .ag-grid {
+    grid-template-columns: repeat(7, 130px);
+    overflow-x: auto;
+  }
+  .agenda { overflow-x: auto; }
+  .b-filters { overflow-x: auto; flex-wrap: nowrap; }
+  .b-filters::-webkit-scrollbar { display: none; }
+  .b-chip { white-space: nowrap; flex-shrink: 0; }
+
+  /* Board modal full screen */
+  .b-overlay { padding: 0; align-items: flex-end; }
+  .b-modal { max-width: 100%; border-radius: 16px 16px 0 0; max-height: 92vh; }
+  .bm-body { max-height: 60vh; overflow-y: auto; }
+  .bf-2col { grid-template-columns: 1fr; }
+}
+
 `;
 
 // ── APP ───────────────────────────────────────────────────────
@@ -385,7 +551,7 @@ function MainApp({ profile, onLogout }) {
   const inACount  = tickets.filter(t => t.status==="in_analysis").length;
 
   const navItems = [
-    { id:"dashboard", label:"Painel" },
+    { id:"dashboard", label:"Painel", icon:"⬛" },
     { id:"tickets",   label:"Chamados", badge: openCount+inACount||null },
     { id:"new",       label:"Novo chamado" },
     ...(profile?.role !== "store" ? [{ id:"self", label:"Registro de serviço" }] : []),
@@ -413,8 +579,8 @@ function MainApp({ profile, onLogout }) {
           <div className="sb-section">Menu</div>
           {navItems.map(n => (
             <div key={n.id} className={`sb-item ${page===n.id?"active":""}`} onClick={() => setPage(n.id)}>
-              <div className="sb-dot" />
-              {n.label}
+              <div className="sb-dot sb-hide-mobile" />
+              <span className="sb-label">{n.label}</span>
               {n.badge && <span className="sb-badge">{n.badge}</span>}
             </div>
           ))}
