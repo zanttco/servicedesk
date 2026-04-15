@@ -876,6 +876,30 @@ function SettingsPage({ sectors, stores, users, companyId, onRefresh }) {
   const [tab, setTab] = useState("sectors");
   const [msg, setMsg] = useState(null);
 
+  // Empresa
+  const [company, setCompany] = useState(null);
+  const [companyForm, setCompanyForm] = useState({name:"", email:""});
+  const [savingCompany, setSavingCompany] = useState(false);
+
+  useEffect(() => {
+    if (!companyId) return;
+    supabase.from("companies").select("*").eq("id", companyId).single()
+      .then(({ data }) => {
+        if (data) { setCompany(data); setCompanyForm({name: data.name, email: data.email}); }
+      });
+  }, [companyId]);
+
+  const saveCompany = async () => {
+    if (!companyForm.name) return;
+    setSavingCompany(true);
+    const { error } = await supabase.from("companies")
+      .update({ name: companyForm.name, email: companyForm.email })
+      .eq("id", companyId);
+    setSavingCompany(false);
+    if (!error) { setMsg({type:"success", text:"Dados da empresa atualizados."}); onRefresh(); }
+    else setMsg({type:"error", text: error.message});
+  };
+
   const [newSector, setNewSector] = useState({name:"",icon:""});
   const addSector = async () => {
     if (!newSector.name) return;
@@ -1009,10 +1033,38 @@ function SettingsPage({ sectors, stores, users, companyId, onRefresh }) {
       <div className="page">
         {msg && <div className={`alert-${msg.type}`} style={{maxWidth:700,marginBottom:16,cursor:"pointer"}} onClick={()=>setMsg(null)}>{msg.text}</div>}
         <div className="tabs">
-          {[["sectors","Setores"],["stores","Filiais"],["users","Usuarios"]].map(([v,l]) => (
+          {[["company","Empresa"],["sectors","Setores"],["stores","Filiais"],["users","Usuarios"]].map(([v,l]) => (
             <div key={v} className={`tab ${tab===v?"active":""}`} onClick={() => { setTab(v); setMsg(null); }}>{l}</div>
           ))}
         </div>
+
+        {tab==="company" && (
+          <div style={{maxWidth:560}}>
+            <div className="card">
+              <div className="card-head"><span className="card-title">Dados da empresa</span></div>
+              <div className="card-body">
+                <div className="form-row">
+                  <label className="form-label">Nome da empresa *</label>
+                  <input className="form-input" placeholder="Ex: Farmacia do Trabalhador"
+                    value={companyForm.name}
+                    onChange={e=>setCompanyForm(f=>({...f,name:e.target.value}))}/>
+                </div>
+                <div className="form-row">
+                  <label className="form-label">E-mail de contato</label>
+                  <input className="form-input" type="email" placeholder="contato@empresa.com.br"
+                    value={companyForm.email}
+                    onChange={e=>setCompanyForm(f=>({...f,email:e.target.value}))}/>
+                </div>
+                <div style={{paddingTop:8}}>
+                  <button className="btn btn-primary" onClick={saveCompany}
+                    disabled={savingCompany||!companyForm.name}>
+                    {savingCompany?"Salvando...":"Salvar"}
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
 
         {tab==="sectors" && (
           <div style={{maxWidth:640}}>
