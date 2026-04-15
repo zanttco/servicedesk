@@ -203,6 +203,28 @@ tbody tr:hover{background:var(--gray-50)}
 .alert-error{background:#fef2f2;border:1px solid #fecaca;color:var(--red);padding:10px 14px;border-radius:var(--radius);font-size:12.5px;margin-bottom:14px}
 .loading{display:flex;align-items:center;justify-content:center;height:200px;color:var(--gray-400);font-size:13px;gap:8px}
 .spinner{width:16px;height:16px;border:2px solid var(--gray-200);border-top-color:var(--gray-900);border-radius:50%;animation:spin .7s linear infinite}
+.upload-zone{border:2px dashed var(--gray-200);border-radius:var(--radius);padding:20px;text-align:center;cursor:pointer;transition:var(--ease);background:var(--gray-50)}
+.upload-zone:hover{border-color:var(--gray-400);background:var(--white)}
+.upload-zone.has-file{border-color:var(--gray-400);border-style:solid;background:var(--white)}
+.upload-preview{max-width:100%;max-height:200px;border-radius:4px;margin-top:8px;object-fit:cover}
+.upload-label{font-size:12px;color:var(--gray-400);margin-top:4px}
+.attachment-img{max-width:100%;max-height:300px;border-radius:var(--radius);border:1px solid var(--gray-200);cursor:pointer;margin-top:8px}
+.upload-zone{border:2px dashed var(--gray-200);border-radius:var(--radius);padding:20px;text-align:center;cursor:pointer;transition:var(--ease);background:var(--gray-50)}
+.upload-zone:hover{border-color:var(--gray-400);background:var(--white)}
+.upload-zone.has-file{border-color:var(--gray-400);border-style:solid;background:var(--white)}
+.upload-preview{max-width:100%;max-height:200px;border-radius:4px;margin-top:8px;object-fit:cover}
+.upload-label{font-size:12px;color:var(--gray-400);margin-top:4px}
+.attachment-img{max-width:100%;max-height:300px;border-radius:var(--radius);border:1px solid var(--gray-200);cursor:pointer;margin-top:8px}
+
+/* UPLOAD */
+.upload-zone{border:2px dashed var(--gray-200);border-radius:var(--radius);padding:20px;
+  text-align:center;cursor:pointer;transition:var(--ease);background:var(--gray-50)}
+.upload-zone:hover{border-color:var(--gray-400);background:var(--white)}
+.upload-zone.has-file{border-color:var(--gray-400);border-style:solid;background:var(--white)}
+.upload-preview{max-width:100%;max-height:200px;border-radius:4px;margin-top:8px;object-fit:cover}
+.upload-label{font-size:12px;color:var(--gray-400);margin-top:4px}
+.attachment-img{max-width:100%;max-height:300px;border-radius:var(--radius);
+  border:1px solid var(--gray-200);cursor:pointer;margin-top:8px}
 
 @keyframes fadeIn{from{opacity:0}to{opacity:1}}
 @keyframes fadeUp{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:translateY(0)}}
@@ -666,6 +688,7 @@ function TicketModal({ ticket, profile, onClose, onRefresh }) {
           </div>
 
           {tab==="detail" && (
+            <>
             <div className="info-grid">
               <div className="info-box"><div className="info-key">Filial</div><div className="info-val">{ticket.store?.name||"—"}</div></div>
               <div className="info-box"><div className="info-key">Setor</div><div className="info-val">{ticket.sector?.name||"—"}</div></div>
@@ -673,6 +696,15 @@ function TicketModal({ ticket, profile, onClose, onRefresh }) {
               <div className="info-box"><div className="info-key">Aberto em</div><div className="info-val" style={{fontSize:12,fontFamily:"var(--mono)"}}>{fmtDate(ticket.created_at)}</div></div>
               {ticket.description && <div className="info-box" style={{gridColumn:"1/-1"}}><div className="info-key">Descrição</div><div className="info-val" style={{lineHeight:1.6}}>{ticket.description}</div></div>}
             </div>
+            {ticket.attachment_url && (
+              <div style={{marginTop:4}}>
+                <div style={{fontSize:10,fontWeight:500,color:"var(--gray-400)",textTransform:"uppercase",letterSpacing:"0.5px",marginBottom:6}}>
+                  Foto anexada
+                </div>
+                <AttachmentImage path={ticket.attachment_url} name={ticket.attachment_name}/>
+              </div>
+            )}
+            </>
           )}
 
           {tab==="obs" && (
@@ -734,25 +766,92 @@ function TicketModal({ ticket, profile, onClose, onRefresh }) {
 }
 
 // ── NEW TICKET ────────────────────────────────────────────────
+
+// ── ATTACHMENT IMAGE ──────────────────────────────────────────
+function AttachmentImage({ path, name }) {
+  const [url, setUrl] = useState(null);
+  useEffect(() => {
+    if (!path) return;
+    // Try signed URL first (private bucket)
+    supabase.storage.from("ticket-attachments")
+      .createSignedUrl(path, 3600)
+      .then(({ data }) => {
+        if (data?.signedUrl) setUrl(data.signedUrl);
+      });
+  }, [path]);
+  if (!url) return <div style={{fontSize:12,color:"var(--gray-400)"}}>Carregando imagem...</div>;
+  return (
+    <img
+      src={url}
+      className="attachment-img"
+      alt={name||"Anexo"}
+      onClick={() => window.open(url, "_blank")}
+    />
+  );
+}
+
 function NewTicketPage({ sectors, stores, profile, onDone }) {
-  const [form, setForm] = useState({title:"",description:"",sector_id:"",priority:"medium",store_id:profile?.store_id||""});
+  const [form,    setForm]    = useState({title:"",description:"",sector_id:"",priority:"medium",store_id:profile?.store_id||""});
   const [loading, setLoading] = useState(false);
-  const [err, setErr] = useState("");
+  const [err,     setErr]     = useState("");
+  const [file,    setFile]    = useState(null);
+  const [preview, setPreview] = useState(null);
+  const fileRef = useRef(null);
   const set = (k,v) => setForm(f=>({...f,[k]:v}));
+
+  const handleFile = (e) => {
+    const f = e.target.files?.[0];
+    if (!f) return;
+    if (f.size > 10*1024*1024) { setErr("Arquivo muito grande. Máximo 10MB."); return; }
+    setFile(f);
+    setPreview(URL.createObjectURL(f));
+    setErr("");
+  };
+
+  const removeFile = () => { setFile(null); setPreview(null); if (fileRef.current) fileRef.current.value = ""; };
 
   const submit = async () => {
     if (!form.title||!form.sector_id) { setErr("Preencha título e setor."); return; }
     setLoading(true); setErr("");
-    const { error } = await supabase.from("tickets").insert({
-      company_id: profile.company_id,
-      title: form.title, description: form.description,
-      sector_id: form.sector_id, store_id: form.store_id||null,
-      priority: form.priority, status: "open", type: "received",
-      created_by: profile.id,
-    });
-    setLoading(false);
-    if (!error) onDone();
-    else setErr("Erro ao abrir chamado: " + error.message);
+    try {
+      let attachment_url = null;
+      let attachment_name = null;
+
+      // Upload da foto se houver
+      if (file) {
+        const ext  = file.name.split(".").pop();
+        const path = `${profile.company_id}/${Date.now()}.${ext}`;
+        const { error: upErr } = await supabase.storage
+          .from("ticket-attachments")
+          .upload(path, file, { contentType: file.type });
+        if (upErr) throw upErr;
+        const { data: urlData } = supabase.storage
+          .from("ticket-attachments")
+          .getPublicUrl(path);
+        attachment_url  = path;
+        attachment_name = file.name;
+      }
+
+      const { error } = await supabase.from("tickets").insert({
+        company_id:      profile.company_id,
+        title:           form.title,
+        description:     form.description,
+        sector_id:       form.sector_id,
+        store_id:        form.store_id||null,
+        priority:        form.priority,
+        status:          "open",
+        type:            "received",
+        created_by:      profile.id,
+        attachment_url,
+        attachment_name,
+      });
+      if (error) throw error;
+      onDone();
+    } catch(e) {
+      setErr("Erro: " + e.message);
+    } finally {
+      setLoading(false);
+    }
   };
 
   return (
@@ -799,9 +898,34 @@ function NewTicketPage({ sectors, stores, profile, onDone }) {
                 </select>
               </div>
             )}
+
+            {/* UPLOAD DE FOTO */}
+            <div className="form-row">
+              <label className="form-label">Foto do problema (opcional)</label>
+              <input ref={fileRef} type="file" accept="image/*" style={{display:"none"}}
+                onChange={handleFile}/>
+              {!preview ? (
+                <div className="upload-zone" onClick={() => fileRef.current?.click()}>
+                  <div style={{fontSize:24,marginBottom:4}}>+</div>
+                  <div style={{fontSize:13,color:"var(--gray-600)",fontWeight:500}}>Clique para adicionar foto</div>
+                  <div className="upload-label">JPG, PNG, WEBP — até 10MB</div>
+                </div>
+              ) : (
+                <div className="upload-zone has-file">
+                  <img src={preview} className="upload-preview" alt="preview"/>
+                  <div style={{marginTop:8,display:"flex",alignItems:"center",justifyContent:"space-between"}}>
+                    <span style={{fontSize:12,color:"var(--gray-500)"}}>{file?.name}</span>
+                    <button className="btn btn-ghost btn-sm" style={{color:"var(--red)"}} onClick={removeFile}>
+                      Remover
+                    </button>
+                  </div>
+                </div>
+              )}
+            </div>
+
             <div style={{display:"flex",gap:8,marginTop:4}}>
               <button className="btn btn-primary" onClick={submit} disabled={loading||!form.title||!form.sector_id}>
-                {loading?"Abrindo...":"Abrir chamado"}
+                {loading?"Enviando...":"Abrir chamado"}
               </button>
               <button className="btn btn-ghost" onClick={onDone}>Cancelar</button>
             </div>
