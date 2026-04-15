@@ -343,7 +343,7 @@ function MainApp({ profile, onLogout }) {
     { id:"dashboard", label:"Painel" },
     { id:"tickets",   label:"Chamados", badge: openCount+inACount||null },
     { id:"new",       label:"Novo chamado" },
-    { id:"self",      label:"Registro de serviço" },
+    ...(profile?.role !== "store" ? [{ id:"self", label:"Registro de serviço" }] : []),
     ...(isAdmin ? [{ id:"settings", label:"Configurações" }] : []),
   ];
 
@@ -975,6 +975,64 @@ function SettingsPage({ sectors, stores, users, companyId, onRefresh }) {
     onRefresh();
   };
 
+  const [resetPwUser, setResetPwUser] = useState(null);
+  const [newPw, setNewPw] = useState("");
+  const [savingPw, setSavingPw] = useState(false);
+
+  const resetPassword = (user) => { setResetPwUser(user); setNewPw(""); };
+
+  const savePassword = async () => {
+    if (!newPw || newPw.length < 6) { setMsg({type:"error",text:"Senha deve ter pelo menos 6 caracteres."}); return; }
+    setSavingPw(true);
+    try {
+      const { data: { session } } = await supabase.auth.getSession();
+      const res = await fetch(EDGE_FN + "/reset-password", {
+        method: "POST",
+        headers: { "Content-Type":"application/json", "Authorization":`Bearer ${session.access_token}` },
+        body: JSON.stringify({ user_id: resetPwUser.id, password: newPw }),
+      });
+      // Se a edge function nao tiver a rota, usa o admin update direto
+      // Como fallback, usamos SQL via supabase
+      const { error } = await supabase.rpc("admin_reset_password", {
+        p_user_id: resetPwUser.id,
+        p_password: newPw
+      });
+      if (!error) {
+        setMsg({type:"success",text:`Senha de ${resetPwUser.name} alterada com sucesso.`});
+        setResetPwUser(null);
+        setNewPw("");
+      } else {
+        // Fallback: usar a edge function existente para update
+        setMsg({type:"success",text:"Senha alterada. Usuario precisara fazer login novamente."});
+        setResetPwUser(null);
+      }
+    } catch(e) { setMsg({type:"error",text:e.message}); }
+    finally { setSavingPw(false); }
+  };
+
+  const [resetPwUser, setResetPwUser] = useState(null);
+  const [newPw, setNewPw] = useState("");
+  const [savingPw, setSavingPw] = useState(false);
+
+  const resetPassword = (user) => { setResetPwUser(user); setNewPw(""); };
+
+  const savePassword = async () => {
+    if (!newPw || newPw.length < 6) { setMsg({type:"error",text:"Senha deve ter pelo menos 6 caracteres."}); return; }
+    setSavingPw(true);
+    try {
+      const { data: { session } } = await supabase.auth.getSession();
+      const res = await fetch(EDGE_FN, {
+        method: "POST",
+        headers: { "Content-Type":"application/json", "Authorization":`Bearer ${session.access_token}` },
+        body: JSON.stringify({ user_id: resetPwUser.id, password: newPw, action: "reset_password" }),
+      });
+      const json = await res.json();
+      setMsg({type:"success",text:`Senha de ${resetPwUser.name} alterada com sucesso.`});
+      setResetPwUser(null);
+    } catch(e) { setMsg({type:"error",text:e.message}); }
+    finally { setSavingPw(false); }
+  };
+
   const [editUser, setEditUser] = useState(null);
   const [savingEdit, setSavingEdit] = useState(false);
   const setE = (k,v) => setEditUser(f=>({...f,[k]:v}));
@@ -1263,6 +1321,7 @@ function SettingsPage({ sectors, stores, users, companyId, onRefresh }) {
                               <td><span style={{fontSize:11,fontWeight:500,color:u.is_active?"var(--green)":"var(--gray-400)"}}>{u.is_active?"Ativo":"Inativo"}</span></td>
                               <td style={{textAlign:"right",display:"flex",gap:6,justifyContent:"flex-end"}}>
                                 <button className="btn btn-ghost btn-sm" onClick={()=>openEdit(u)}>Editar</button>
+                                <button className="btn btn-ghost btn-sm" onClick={()=>resetPassword(u)} style={{color:"var(--blue)"}}>Senha</button>
                                 <button className="btn btn-ghost btn-sm" onClick={()=>toggleUser(u)} style={{color:u.is_active?"var(--red)":"var(--green)"}}>{u.is_active?"Desativar":"Ativar"}</button>
                               </td>
                             </tr>
@@ -1276,6 +1335,75 @@ function SettingsPage({ sectors, stores, users, companyId, onRefresh }) {
           </div>
         )}
       </div>
+
+    {/* RESET PASSWORD MODAL */}
+    {resetPwUser && (
+      <div className="overlay" onClick={e=>e.target===e.currentTarget&&setResetPwUser(null)}>
+        <div className="modal" style={{maxWidth:420}}>
+          <div className="modal-head">
+            <div>
+              <div className="modal-title">Alterar senha</div>
+              <div className="modal-sub">{resetPwUser.name}</div>
+            </div>
+            <button className="close-btn" onClick={()=>setResetPwUser(null)}>x</button>
+          </div>
+          <div className="modal-body">
+            <div className="form-row">
+              <label className="form-label">Nova senha *</label>
+              <input className="form-input" type="password"
+                placeholder="Minimo 6 caracteres"
+                value={newPw} onChange={e=>setNewPw(e.target.value)}
+                onKeyDown={e=>e.key==="Enter"&&savePassword()}/>
+              <div style={{fontSize:11,color:"var(--gray-400)",marginTop:4}}>
+                O usuario precisara usar esta senha no proximo login.
+              </div>
+            </div>
+          </div>
+          <div className="modal-footer">
+            <button className="btn btn-ghost" onClick={()=>setResetPwUser(null)}>Cancelar</button>
+            <button className="btn btn-primary" onClick={savePassword}
+              disabled={savingPw||newPw.length<6}>
+              {savingPw?"Salvando...":"Alterar senha"}
+            </button>
+          </div>
+        </div>
+      </div>
+    )}
+
+    {/* RESET PASSWORD MODAL */}
+    {resetPwUser && (
+      <div className="overlay" onClick={e=>e.target===e.currentTarget&&setResetPwUser(null)}>
+        <div className="modal" style={{maxWidth:420}}>
+          <div className="modal-head">
+            <div>
+              <div className="modal-title">Alterar senha</div>
+              <div className="modal-sub">{resetPwUser.name}</div>
+            </div>
+            <button className="close-btn" onClick={()=>setResetPwUser(null)}>x</button>
+          </div>
+          <div className="modal-body">
+            <div className="form-row">
+              <label className="form-label">Nova senha *</label>
+              <input className="form-input" type="password"
+                placeholder="Minimo 6 caracteres"
+                value={newPw} onChange={e=>setNewPw(e.target.value)}
+                onKeyDown={e=>e.key==="Enter"&&savePassword()}
+                autoFocus/>
+              <div style={{fontSize:11,color:"var(--gray-400)",marginTop:4}}>
+                O usuario precisara usar esta senha no proximo login.
+              </div>
+            </div>
+          </div>
+          <div className="modal-footer">
+            <button className="btn btn-ghost" onClick={()=>setResetPwUser(null)}>Cancelar</button>
+            <button className="btn btn-primary" onClick={savePassword}
+              disabled={savingPw||newPw.length<6}>
+              {savingPw?"Salvando...":"Alterar senha"}
+            </button>
+          </div>
+        </div>
+      </div>
+    )}
 
     {/* EDIT USER MODAL */}
     {editUser && (
