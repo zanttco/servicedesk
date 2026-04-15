@@ -1010,29 +1010,6 @@ function SettingsPage({ sectors, stores, users, companyId, onRefresh }) {
     finally { setSavingPw(false); }
   };
 
-  const [resetPwUser, setResetPwUser] = useState(null);
-  const [newPw, setNewPw] = useState("");
-  const [savingPw, setSavingPw] = useState(false);
-
-  const resetPassword = (user) => { setResetPwUser(user); setNewPw(""); };
-
-  const savePassword = async () => {
-    if (!newPw || newPw.length < 6) { setMsg({type:"error",text:"Senha deve ter pelo menos 6 caracteres."}); return; }
-    setSavingPw(true);
-    try {
-      const { data: { session } } = await supabase.auth.getSession();
-      const res = await fetch(EDGE_FN, {
-        method: "POST",
-        headers: { "Content-Type":"application/json", "Authorization":`Bearer ${session.access_token}` },
-        body: JSON.stringify({ user_id: resetPwUser.id, password: newPw, action: "reset_password" }),
-      });
-      const json = await res.json();
-      setMsg({type:"success",text:`Senha de ${resetPwUser.name} alterada com sucesso.`});
-      setResetPwUser(null);
-    } catch(e) { setMsg({type:"error",text:e.message}); }
-    finally { setSavingPw(false); }
-  };
-
   const [editUser, setEditUser] = useState(null);
   const [savingEdit, setSavingEdit] = useState(false);
   const setE = (k,v) => setEditUser(f=>({...f,[k]:v}));
@@ -1371,39 +1348,7 @@ function SettingsPage({ sectors, stores, users, companyId, onRefresh }) {
     )}
 
     {/* RESET PASSWORD MODAL */}
-    {resetPwUser && (
-      <div className="overlay" onClick={e=>e.target===e.currentTarget&&setResetPwUser(null)}>
-        <div className="modal" style={{maxWidth:420}}>
-          <div className="modal-head">
-            <div>
-              <div className="modal-title">Alterar senha</div>
-              <div className="modal-sub">{resetPwUser.name}</div>
-            </div>
-            <button className="close-btn" onClick={()=>setResetPwUser(null)}>x</button>
-          </div>
-          <div className="modal-body">
-            <div className="form-row">
-              <label className="form-label">Nova senha *</label>
-              <input className="form-input" type="password"
-                placeholder="Minimo 6 caracteres"
-                value={newPw} onChange={e=>setNewPw(e.target.value)}
-                onKeyDown={e=>e.key==="Enter"&&savePassword()}
-                autoFocus/>
-              <div style={{fontSize:11,color:"var(--gray-400)",marginTop:4}}>
-                O usuario precisara usar esta senha no proximo login.
-              </div>
-            </div>
-          </div>
-          <div className="modal-footer">
-            <button className="btn btn-ghost" onClick={()=>setResetPwUser(null)}>Cancelar</button>
-            <button className="btn btn-primary" onClick={savePassword}
-              disabled={savingPw||newPw.length<6}>
-              {savingPw?"Salvando...":"Alterar senha"}
-            </button>
-          </div>
-        </div>
-      </div>
-    )}
+        )}
 
     {/* EDIT USER MODAL */}
     {editUser && (
