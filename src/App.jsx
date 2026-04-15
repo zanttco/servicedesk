@@ -1693,7 +1693,7 @@ const CSS = `
 @keyframes bfadeUp{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:translateY(0)}}
 `;
 
-export default function BoardPage({ profile, supabase, sectors, stores, users }) {
+function BoardPage({ profile, supabase, sectors, stores, users }) {
   const [view,        setView]        = useState("kanban");
   const [tasks,       setTasks]       = useState([]);
   const [users,       setUsers]       = useState([]);
