@@ -329,7 +329,29 @@ function MainApp({ profile, onLogout }) {
       setTickets(tix.data || []);
       if (isAdmin) {
         const { data: u } = await supabase.from("profiles").select("*").eq("company_id", companyId).order("name");
-        setUsers(u || []);
+        // Buscar emails via auth admin (usando service role na edge function)
+        if (u && u.length > 0) {
+          try {
+            const { data: { session } } = await supabase.auth.getSession();
+            const res = await fetch(EDGE_FN, {
+              method: "POST",
+              headers: { "Content-Type":"application/json", "Authorization":`Bearer ${session.access_token}` },
+              body: JSON.stringify({ action: "list_users", user_ids: u.map(p => p.id) }),
+            });
+            const json = await res.json();
+            if (json.ok && json.users) {
+              const emailMap = {};
+              json.users.forEach(usr => { emailMap[usr.id] = usr.email; });
+              setUsers(u.map(p => ({ ...p, email: emailMap[p.id] || "" })));
+            } else {
+              setUsers(u);
+            }
+          } catch(e) {
+            setUsers(u);
+          }
+        } else {
+          setUsers(u || []);
+        }
       }
     } finally { setLoadData(false); }
   }, [companyId, isAdmin]);
@@ -975,6 +997,39 @@ function SettingsPage({ sectors, stores, users, companyId, onRefresh }) {
     onRefresh();
   };
 
+  const deleteUser = async (user) => {
+    if (!window.confirm(`Remover usuario ${user.name}? Esta acao nao pode ser desfeita.`)) return;
+    // Deletar profile_sectors primeiro
+    await supabase.from("profile_sectors").delete().eq("profile_id", user.id);
+    // Deletar profile
+    await supabase.from("profiles").delete().eq("id", user.id);
+    // Remover do Auth via edge function
+    const { data: { session } } = await supabase.auth.getSession();
+    await fetch(EDGE_FN, {
+      method: "POST",
+      headers: { "Content-Type":"application/json", "Authorization":`Bearer ${session.access_token}` },
+      body: JSON.stringify({ action: "delete_user", user_id: user.id }),
+    });
+    setMsg({type:"success",text:`Usuario ${user.name} removido.`});
+    onRefresh();
+  };
+
+  const deleteUser = async (user) => {
+    if (!window.confirm(`Remover usuario ${user.name}? Esta acao nao pode ser desfeita.`)) return;
+    await supabase.from("profile_sectors").delete().eq("profile_id", user.id);
+    await supabase.from("profiles").delete().eq("id", user.id);
+    try {
+      const { data: { session } } = await supabase.auth.getSession();
+      await fetch(EDGE_FN, {
+        method: "POST",
+        headers: { "Content-Type":"application/json", "Authorization":`Bearer ${session.access_token}` },
+        body: JSON.stringify({ action: "delete_user", user_id: user.id }),
+      });
+    } catch(e) { console.log("Auth delete:", e); }
+    setMsg({type:"success",text:`Usuario ${user.name} removido.`});
+    onRefresh();
+  };
+
   const [resetPwUser, setResetPwUser] = useState(null);
   const [newPw, setNewPw] = useState("");
   const [savingPw, setSavingPw] = useState(false);
@@ -986,25 +1041,18 @@ function SettingsPage({ sectors, stores, users, companyId, onRefresh }) {
     setSavingPw(true);
     try {
       const { data: { session } } = await supabase.auth.getSession();
-      const res = await fetch(EDGE_FN + "/reset-password", {
+      const res = await fetch(EDGE_FN, {
         method: "POST",
         headers: { "Content-Type":"application/json", "Authorization":`Bearer ${session.access_token}` },
-        body: JSON.stringify({ user_id: resetPwUser.id, password: newPw }),
+        body: JSON.stringify({ action: "reset_password", user_id: resetPwUser.id, password: newPw }),
       });
-      // Se a edge function nao tiver a rota, usa o admin update direto
-      // Como fallback, usamos SQL via supabase
-      const { error } = await supabase.rpc("admin_reset_password", {
-        p_user_id: resetPwUser.id,
-        p_password: newPw
-      });
-      if (!error) {
+      const json = await res.json();
+      if (json.ok) {
         setMsg({type:"success",text:`Senha de ${resetPwUser.name} alterada com sucesso.`});
         setResetPwUser(null);
         setNewPw("");
       } else {
-        // Fallback: usar a edge function existente para update
-        setMsg({type:"success",text:"Senha alterada. Usuario precisara fazer login novamente."});
-        setResetPwUser(null);
+        setMsg({type:"error",text:json.error||"Erro ao alterar senha."});
       }
     } catch(e) { setMsg({type:"error",text:e.message}); }
     finally { setSavingPw(false); }
@@ -1276,7 +1324,7 @@ function SettingsPage({ sectors, stores, users, companyId, onRefresh }) {
               <div className="card-head"><span className="card-title">Usuarios ({users.length})</span></div>
               <div className="table-wrap">
                 <table>
-                  <thead><tr><th>Nome</th><th>Perfil</th><th>Setor / Loja</th><th>Status</th><th></th></tr></thead>
+                  <thead><tr><th>Nome</th><th>E-mail</th><th>Perfil</th><th>Setor / Loja</th><th>Status</th><th></th></tr></thead>
                   <tbody>
                     {users.length===0
                       ? <tr><td colSpan={5} style={{textAlign:"center",color:"var(--gray-400)",padding:24}}>Nenhum usuario.</td></tr>
@@ -1293,13 +1341,15 @@ function SettingsPage({ sectors, stores, users, companyId, onRefresh }) {
                                   <span>{u.name}</span>
                                 </div>
                               </td>
+                              <td style={{fontSize:11,color:"var(--gray-400)",fontFamily:"var(--mono)"}}>{u.email||"—"}</td>
                               <td style={{fontSize:12,color:"var(--gray-500)"}}>{ROLE_LABELS[u.role]||u.role}</td>
                               <td style={{fontSize:12,color:"var(--gray-500)"}}>{sec?sec.name:sto?sto.name:"---"}</td>
                               <td><span style={{fontSize:11,fontWeight:500,color:u.is_active?"var(--green)":"var(--gray-400)"}}>{u.is_active?"Ativo":"Inativo"}</span></td>
                               <td style={{textAlign:"right",display:"flex",gap:6,justifyContent:"flex-end"}}>
                                 <button className="btn btn-ghost btn-sm" onClick={()=>openEdit(u)}>Editar</button>
                                 <button className="btn btn-ghost btn-sm" onClick={()=>resetPassword(u)} style={{color:"var(--blue)"}}>Senha</button>
-                                <button className="btn btn-ghost btn-sm" onClick={()=>toggleUser(u)} style={{color:u.is_active?"var(--red)":"var(--green)"}}>{u.is_active?"Desativar":"Ativar"}</button>
+                                <button className="btn btn-ghost btn-sm" onClick={()=>toggleUser(u)} style={{color:u.is_active?"var(--amber)":"var(--green)"}}>{u.is_active?"Desativar":"Ativar"}</button>
+                                <button className="btn btn-ghost btn-sm" onClick={()=>deleteUser(u)} style={{color:"var(--red)"}}>Remover</button>
                               </td>
                             </tr>
                           );
